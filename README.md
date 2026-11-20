@@ -12,7 +12,15 @@ Contrato do stream: `bridge/STREAM.md` no draw-core (protocolo `DRAL` v1).
   backoff), `Session` que aplica FULL/DELTA e sinaliza página nova.
 - **M2:** vetorização incremental por componente conexo
   (`drawlink.incremental`, `drawlink.live`), `drawlink watch --vectors`.
+- **DRAL v2:** `Update.captured_at_us`, `Update.anchor_corners` e
+  `Update.latency_us` (= `ts_us - captured_at_us`). `watch` imprime `lat=` quando
+  há dado. Gravações v1 continuam reproduzindo, sem esses campos (`None`).
 - M3 SVG ao vivo, M4 DXF, M5 cursor (Windows): ainda não.
+
+**O que `latency_us` mede e o que não mede:** só o trecho captura -> publicação
+dentro do Draw (mesmo relógio monotônico). Não inclui a câmera, o transporte
+nem o processamento deste lado, então **não substitui** o Step 0 de latência
+vidro->tinta do draw-core, que filma um cronômetro.
 
 ## Vetorização incremental (M2)
 
@@ -72,5 +80,5 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check . && pytest -q
 ```
 
-A dependência do `draw-core` está fixada no commit `16b6174` (PR
-santleme/draw-core#60); passa para uma tag quando o draw-core publicar uma.
+A dependência do `draw-core` está fixada no commit `91916f4` (draw-core
+#64 DRAL v2 e #65 vetorizador); passa para uma tag quando o draw-core publicar uma.

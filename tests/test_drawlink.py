@@ -397,3 +397,79 @@ def test_real_closed_pipe_exits_zero_without_shutdown_error(tmp_path):
         proc.wait()
     assert status == 0, stderr
     assert stderr == b""
+
+
+def _v1_full(generation, version, mask):
+    import struct
+    import zlib
+
+    payload = struct.pack("<ff", 210.0, 297.0) + zlib.compress(mask.tobytes(), 1)
+    h, w = mask.shape
+    return (
+        stream.HEADER.pack(
+            stream.MAGIC,
+            1,
+            stream.KIND_FULL,
+            0,
+            generation,
+            version,
+            0,
+            w,
+            h,
+            len(payload),
+        )
+        + payload
+    )
+
+
+def test_v2_fields_reach_the_update_and_latency_is_publication_minus_capture(tmp_path):
+    corners = np.array([[10, 20], [300, 22], [305, 400], [8, 398]], np.float32)
+    a = _mask()
+    b = a.copy()
+    b[3:6, 3:6] = 255
+    path = _file(
+        tmp_path,
+        stream.pack_full(
+            1, 1, 5_000, a, (210.0, 297.0), captured_at_us=2_000, anchor=corners
+        ),
+        stream.pack_delta(1, 2, 9_000, b, (3, 3, 3, 3), captured_at_us=6_500),
+    )
+    session = Session()
+    full, delta = (session.feed(r) for r in source.from_file(path))
+    assert full.captured_at_us == 2_000 and full.latency_us == 3_000
+    assert np.allclose(full.anchor_corners, corners)
+    assert delta.captured_at_us == 6_500 and delta.latency_us == 2_500
+    assert np.allclose(delta.anchor_corners, corners)  # a ancora persiste no DELTA
+    assert np.allclose(session.anchor_corners, corners)
+
+
+def test_missing_v2_data_is_none_not_a_fake_latency(tmp_path):
+    path = _file(tmp_path, stream.pack_full(1, 1, 5_000, _mask(), (210.0, 297.0)))
+    (update,) = (Session().feed(r) for r in source.from_file(path))
+    assert update.captured_at_us is None and update.latency_us is None
+    assert update.anchor_corners is None
+
+
+def test_v1_recording_still_replays_without_v2_fields(tmp_path):
+    mask = _mask()
+    mask[2:4, 2:4] = 255
+    path = _file(tmp_path, _v1_full(1, 1, mask))
+    session = Session()
+    (update,) = (session.feed(r) for r in source.from_file(path))
+    assert np.array_equal(session.mask, mask)
+    assert update.captured_at_us is None and update.latency_us is None
+
+
+def test_watch_prints_latency_only_when_known(tmp_path):
+    with_ts = _file(
+        tmp_path,
+        stream.pack_full(1, 1, 9_000, _mask(255), (1.0, 1.0), captured_at_us=4_000),
+    )
+    out = io.StringIO()
+    cli.watch(str(with_ts), out=out)
+    assert "lat=5.0ms" in out.getvalue()
+    without = tmp_path / "n.drawink"
+    without.write_bytes(stream.pack_full(1, 1, 9_000, _mask(255), (1.0, 1.0)))
+    out2 = io.StringIO()
+    cli.watch(str(without), out=out2)
+    assert "lat=" not in out2.getvalue()

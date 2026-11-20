@@ -10,8 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     # Codec do stream (draw.stream) e vetorizador (draw.exporters). Fixado no
-    # commit do draw-core que trouxe o stream (PR #60); vira tag quando houver.
-    "draw-core @ git+https://github.com/santleme/draw-core@16b61746addbdd3c5e8477e15cc97f44a2629526",
+    # commit do draw-core com o stream DRAL v2 (PR #64) e o vetorizador do #65; vira tag quando houver.
+    "draw-core @ git+https://github.com/santleme/draw-core@91916f4515e23a79cabe75c8dfc10e485ab5088d",
 ]
 
 [project.optional-dependencies]

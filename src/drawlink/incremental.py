@@ -48,8 +48,9 @@ def window(x, y, w, h, shape):
 class Island:
     """Um componente conexo de tinta e suas polilinhas (px da pagina).
 
-    key identifica o conteudo exato do componente: mudou um pixel, mudou a
-    chave. polylines: tupla de {"points": ndarray (N, 2) [x, y], "closed": bool}.
+    key identifica o componente: tamanho da pagina, caixa e hash dos pixels. Mudou
+    um pixel, ou o tamanho da pagina (o recorte e cortado nos limites dela, e o
+    afinamento trata a borda de forma especial), mudou a chave. polylines: tupla de {"points": ndarray (N, 2) [x, y], "closed": bool}.
     """
 
     key: tuple
@@ -125,7 +126,7 @@ class IncrementalVectorizer:
             x, y, w, h, _area = (int(v) for v in stats[label])
             region = labels[y : y + h, x : x + w] == label
             digest = hashlib.blake2b(np.packbits(region).tobytes(), digest_size=12)
-            key = (x, y, w, h, digest.digest())
+            key = (*mask.shape, x, y, w, h, digest.digest())
             island = self._cache.get(key)
             if island is None:
                 island = self._build(key, labels, label, x, y, w, h)

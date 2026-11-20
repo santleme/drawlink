@@ -277,3 +277,89 @@ def test_resize_and_reset_still_report_removals():
     assert vec.vectorized_last == 1
     assert delta2.added == () and delta2.removed == ()  # mesmo conteudo: nada mudou
     assert vec.islands[0].key == key
+
+
+def _spurred_tree(seed):
+    """Arvore de tracos grossos com espinhos curtos, num canvas 600x600.
+
+    Espessura 4-14 e espinhos entre ~t e ~2,8t: o limite de poda e
+    max(7, 2,4*r), so sensivel ao pixel consultado quando r > 3 e o espinho cai
+    perto do limite.
+    """
+    rng = np.random.default_rng(seed)
+    mask = np.zeros((600, 600), np.uint8)
+    t = int(rng.integers(4, 15))
+    x, y = int(rng.integers(150, 450)), int(rng.integers(150, 450))
+    pts = [(x, y)]
+    for _ in range(int(rng.integers(3, 7))):
+        a, length = rng.uniform(0, 6.28), rng.integers(25, 70)
+        nx, ny = int(x + length * np.cos(a)), int(y + length * np.sin(a))
+        cv2.line(mask, (x, y), (nx, ny), 255, t)
+        pts.append((nx, ny))
+        x, y = nx, ny
+    for _ in range(int(rng.integers(2, 6))):
+        px, py = pts[int(rng.integers(0, len(pts)))]
+        a = rng.uniform(0, 6.28)
+        length = int(rng.integers(int(t), int(2.8 * t) + 6))
+        end = (int(px + length * np.cos(a)), int(py + length * np.sin(a)))
+        cv2.line(mask, (px, py), end, 255, t)
+    return mask
+
+
+def test_half_pixel_junction_crop_keeps_the_same_spurs_as_batch():
+    # Regressao: a poda consulta round() de centroides de meio pixel, e o
+    # arredondamento do Python (para o par) depende da paridade da coordenada.
+    # Estas sementes divergem do batch quando o recorte tem origem impar (17 de
+    # 3000 arvores) e batem com origem par.
+    for seed in (13, 785, 820, 847, 943, 1362):
+        mask = _spurred_tree(seed)
+        batch = vectorize_clean(mask > 0)
+        vec = IncrementalVectorizer()
+        vec.update(mask)
+        ys, xs = np.nonzero(mask)
+        assert (xs.min() - 3) % 2 or (ys.min() - 3) % 2  # origem natural impar
+        assert len(vec.polylines) == len(batch), seed
+        assert _deviation(batch, vec.polylines) <= 1.5, seed
+
+
+def test_same_generation_resize_replaces_border_strokes_geometry():
+    """FULL de outro tamanho na mesma geracao: o traco que deixa de encostar na
+    borda e revetorizado com outra geometria e o consumidor precisa recebe-la."""
+    narrow = np.zeros((40, 30), np.uint8)
+    narrow[5:35, 26:30] = 255  # 4 px de largura, colada na borda direita
+    wide = np.zeros((40, 40), np.uint8)
+    wide[5:35, 26:30] = 255  # mesmos pixels, agora no interior
+    live = LiveVectorizer()
+    consumer = {}
+
+    def apply(delta):
+        for key in delta.removed:
+            consumer.pop(key)
+        for island in delta.added:
+            consumer[island.key] = island.polylines
+
+    _, d1 = live.feed(_rec(stream.pack_full(1, 1, 0, narrow, (210.0, 297.0))))
+    apply(d1)
+    before = [np.array(line["points"]) for line in live.vectors.polylines]
+    _, d2 = live.feed(_rec(stream.pack_full(1, 2, 1, wide, (210.0, 297.0))))
+    apply(d2)
+    after = [np.array(line["points"]) for line in live.vectors.polylines]
+    # premissa do cenario: a geometria de fato muda quando deixa de ser borda
+    assert len(before) != len(after) or not all(
+        a.shape == b.shape and np.allclose(a, b)
+        for a, b in zip(before, after, strict=True)
+    )
+    # o consumidor, aplicando so os deltas, tem exatamente a geometria atual
+    mine = sorted(
+        (
+            tuple(map(tuple, np.round(line["points"], 3)))
+            for polys in consumer.values()
+            for line in polys
+        )
+    )
+    truth = sorted(
+        tuple(map(tuple, np.round(line["points"], 3)))
+        for line in live.vectors.polylines
+    )
+    assert mine == truth
+    assert set(consumer) == {i.key for i in live.vectors.islands}

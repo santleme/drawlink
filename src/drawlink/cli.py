@@ -9,6 +9,11 @@ from . import source
 from .session import Session
 
 
+class OutputClosed(Exception):
+    """stdout fechou (ex.: `| head`). Nao e OSError de proposito: o follow
+    trata OSError como queda do Draw e reconectaria para sempre."""
+
+
 def _describe(update, session):
     x, y, w, h = update.box
     return (
@@ -38,7 +43,10 @@ def watch(
         if new_connection:
             session.clear()
         update = session.feed(record)
-        print(_describe(update, session), file=out, flush=True)
+        try:
+            print(_describe(update, session), file=out, flush=True)
+        except (BrokenPipeError, ValueError) as error:
+            raise OutputClosed(str(error)) from error
         count += 1
         return max_records is not None and count >= max_records
 
@@ -71,6 +79,8 @@ def main(argv=None):
         watch(args.source, args.token_file, args.max_records)
     except KeyboardInterrupt:
         return 130
+    except OutputClosed:
+        return 0
     except (AuthenticationError, ProtocolError, OSError, ValueError) as error:
         print(f"Erro: {error}", file=sys.stderr)
         return 2

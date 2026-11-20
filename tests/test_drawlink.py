@@ -170,7 +170,9 @@ def test_invalid_payload_reconnects_instead_of_ending_follow():
         pub.close()
 
 
-def test_stop_is_checked_while_records_keep_flowing():
+def test_stop_is_checked_while_records_keep_flowing(monkeypatch):
+    # Sem janela ociosa curta: so a checagem por registro pode encerrar.
+    monkeypatch.setattr(source, "IDLE_TIMEOUT_S", 30.0)
     pub = _live()
     try:
         _pub(pub, 1, 1, _mask())
@@ -178,7 +180,7 @@ def test_stop_is_checked_while_records_keep_flowing():
         count = []
 
         def feed():
-            while len(count) < 3 and not done.is_set():
+            while not done.is_set():
                 n["v"] += 1
                 m = _mask()
                 m[0, n["v"] % 30] = 255
@@ -317,3 +319,26 @@ def test_corrupt_zlib_in_recording_returns_2(tmp_path, capsys):
     path = _file(tmp_path, rec)
     assert cli.main(["watch", str(path)]) == 2
     assert "Erro" in capsys.readouterr().err
+
+
+def test_closed_stdout_ends_watch_instead_of_reconnecting_forever():
+    class Closed(io.StringIO):
+        def write(self, _text):
+            raise BrokenPipeError("pipe fechado")
+
+    pub = _live()
+    try:
+        _pub(pub, 1, 1, _mask(255))
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".tok") as handle:
+            handle.write(pub._token.decode())
+            handle.flush()
+            with pytest.raises(cli.OutputClosed):
+                cli.watch(
+                    f"tcp://127.0.0.1:{pub.port}",
+                    token_file=handle.name,
+                    out=Closed(),
+                )
+    finally:
+        pub.close()

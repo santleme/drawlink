@@ -6,7 +6,7 @@ from draw import stream
 from draw.exporters.vectorize import vectorize_clean
 
 from drawlink import cli
-from drawlink.incremental import IncrementalVectorizer
+from drawlink.incremental import IncrementalVectorizer, window
 from drawlink.live import LiveVectorizer
 
 H, W = 1200, 850
@@ -16,7 +16,11 @@ def _raster(lines, shape=(H, W)):
     img = np.zeros(shape, np.uint8)
     for line in lines:
         pts = np.round(np.asarray(line["points"])).astype(np.int32).reshape(-1, 1, 2)
-        cv2.polylines(img, [pts], bool(line["closed"]), 255, 1)
+        if len(pts) == 1:  # ponto isolado: o exporter do Draw desenha um ponto
+            x, y = pts[0, 0]
+            cv2.circle(img, (int(x), int(y)), 1, 255, -1)
+        else:
+            cv2.polylines(img, [pts], bool(line["closed"]), 255, 1)
     return img
 
 
@@ -206,9 +210,17 @@ def test_live_vectorizer_follows_pages(tmp_path):
     u2, d2 = live.feed(_rec(stream.pack_full(2, 1, 1, second, (210.0, 297.0))))
     assert u2.reset  # pagina nova
     assert len(d2.added) == 1 and len(d2.removed) == 1  # a antiga sai
-    # a mesma pagina de novo: conteudo identico nao e reprocessado
-    live.feed(_rec(stream.pack_full(3, 1, 2, second, (210.0, 297.0))))
-    assert live.vectors.vectorized_last == 0
+    # a mesma pagina em geracao nova: substituicao completa, sem revetorizar
+    old_keys = {i.key for i in live.vectors.islands}
+    u3, d3 = live.feed(_rec(stream.pack_full(3, 1, 2, second, (210.0, 297.0))))
+    assert u3.reset and live.vectors.vectorized_last == 0
+    assert set(d3.removed) == old_keys  # remove tudo da antiga...
+    assert {i.key for i in d3.added} == old_keys  # ...e reentrega o identico
+    # contrato: aplicar removed e depois added reconstroi o estado certo
+    state = set(old_keys)
+    state -= set(d3.removed)
+    state |= {i.key for i in d3.added}
+    assert state == {i.key for i in live.vectors.islands}
 
 
 def _rec(data):
@@ -230,3 +242,38 @@ def test_cli_vectors_flag_prints_island_counts(tmp_path):
     out2 = io.StringIO()
     cli.watch(str(path), out=out2)
     assert "ilhas" not in out2.getvalue()
+
+
+def test_deviation_sees_isolated_dots():
+    dot_a = [{"points": np.array([[10.0, 10.0]]), "closed": False}]
+    dot_b = [{"points": np.array([[400.0, 500.0]]), "closed": False}]
+    assert _deviation(dot_a, dot_a) == 0
+    assert _deviation(dot_a, dot_b) > 100  # mover um ponto nao passa despercebido
+
+
+def test_window_origin_is_even_and_clipped_to_the_page():
+    for x in range(0, 40):
+        for y in range(0, 40):
+            x0, y0, x1, y1 = window(x, y, 20, 20, (H, W))
+            assert x0 % 2 == 0 and y0 % 2 == 0
+            assert 0 <= x0 <= max(0, x - 3) and 0 <= y0 <= max(0, y - 3)
+            assert x1 <= W and y1 <= H
+    assert window(W - 10, H - 10, 10, 10, (H, W))[2:] == (W, H)  # corta na borda
+
+
+def test_resize_and_reset_still_report_removals():
+    mask = _scribble(4, 8)
+    vec = IncrementalVectorizer()
+    vec.update(mask)
+    old_keys = {i.key for i in vec.islands}
+    assert old_keys
+    small = np.zeros((300, 200), np.uint8)
+    cv2.line(small, (10, 10), (150, 90), 255, 3)
+    delta = vec.update(small)  # FULL de outro tamanho, mesma geracao
+    assert set(delta.removed) == old_keys  # o consumidor ainda e avisado
+    assert len(delta.added) == 1
+    key = vec.islands[0].key
+    delta2 = vec.update(small, reset=True)  # reset invalida o cache, nao o delta
+    assert vec.vectorized_last == 1
+    assert delta2.added == () and delta2.removed == ()  # mesmo conteudo: nada mudou
+    assert vec.islands[0].key == key

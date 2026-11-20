@@ -29,6 +29,21 @@ from draw.exporters.vectorize import vectorize_clean
 PAD = 3
 
 
+def window(x, y, w, h, shape):
+    """Janela (x0, y0, x1, y1) de recorte de um componente na pagina.
+
+    Folga PAD cortada nos limites da pagina, e origem (x0, y0) sempre PAR: a
+    poda de espinhos consulta o pixel round() de centroides de meio pixel, e o
+    arredondamento do Python (para o par) depende da paridade da coordenada.
+    Com origem par a paridade e a mesma do batch e o pixel consultado e o mesmo.
+    """
+    height, width = shape
+    x0, y0 = max(0, x - PAD), max(0, y - PAD)
+    x0 -= x0 % 2
+    y0 -= y0 % 2
+    return x0, y0, min(width, x + w + PAD), min(height, y + h + PAD)
+
+
 @dataclass(frozen=True, slots=True)
 class Island:
     """Um componente conexo de tinta e suas polilinhas (px da pagina).
@@ -89,11 +104,17 @@ class IncrementalVectorizer:
         self.vectorized_last = 0
 
     def update(self, mask, reset=False):
-        """Reconcilia com a mascara atual e devolve o VectorDelta."""
-        if reset:
-            self.reset()
-        if self._shape is not None and mask.shape != self._shape:
-            self.reset()  # pagina de outro tamanho: o cache nao vale
+        """Reconcilia com a mascara atual e devolve o VectorDelta.
+
+        Quem consome aplica `removed` e depois `added`. Mudar o tamanho da
+        pagina ou passar reset=True invalida o cache (tudo e revetorizado), mas
+        o delta continua relativo ao estado anterior.
+        """
+        if reset or (self._shape is not None and mask.shape != self._shape):
+            # Pagina de outro tamanho (ou pedido explicito): as chaves em cache
+            # nao valem. `_live` fica de proposito, para o delta ainda remover
+            # as ilhas antigas; reset() e quem esquece tudo.
+            self._cache.clear()
         self._shape = mask.shape
         ink = np.ascontiguousarray(mask > 0, dtype=np.uint8)
         count, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
@@ -121,9 +142,7 @@ class IncrementalVectorizer:
         return VectorDelta(added=added, removed=removed)
 
     def _build(self, key, labels, label, x, y, w, h):
-        height, width = labels.shape
-        x0, y0 = max(0, x - PAD), max(0, y - PAD)
-        x1, y1 = min(width, x + w + PAD), min(height, y + h + PAD)
+        x0, y0, x1, y1 = window(x, y, w, h, labels.shape)
         crop = labels[y0:y1, x0:x1] == label  # so este componente
         offset = np.array([x0, y0], dtype=np.float64)
         shifted = tuple(

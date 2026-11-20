@@ -9,9 +9,13 @@ from .session import Session, Update
 class LiveVectorizer:
     """Aplica registros e mantem as polilinhas da pagina atual.
 
-    Pagina nova (`Update.reset`): o delta remove as ilhas da pagina antiga e
-    traz as da nova. Quem precisa fechar a pagina (ex.: exportar DXF) usa
-    `Update.reset` para saber quando.
+    Contrato do delta: aplique `removed` e depois `added`.
+    - Registro normal: delta incremental (so o que mudou).
+    - Pagina nova (`Update.reset`): substituicao COMPLETA. `removed` traz todas
+      as ilhas da pagina antiga e `added` todas as da nova, inclusive as de
+      conteudo identico (mesma chave nos dois lados). Assim vale tanto aplicar
+      o delta quanto limpar a tela no reset e desenhar `added`; o conteudo
+      identico nao e revetorizado, so reentregue.
     """
 
     def __init__(self, epsilon=1.5):
@@ -20,9 +24,11 @@ class LiveVectorizer:
 
     def feed(self, record: InkRecord) -> tuple[Update, VectorDelta]:
         update = self.session.feed(record)
-        # Sem reset na pagina nova: o update reconcilia por chave de conteudo,
-        # entao o que sumiu da mascara sai e o que e identico permanece.
-        return update, self.vectors.update(self.session.mask)
+        before = tuple(self.vectors._live)
+        delta = self.vectors.update(self.session.mask)
+        if update.reset:
+            delta = VectorDelta(added=tuple(self.vectors.islands), removed=before)
+        return update, delta
 
     def clear(self):
         """Nova conexao: o stream recomeca por um FULL."""

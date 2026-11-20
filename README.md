@@ -21,6 +21,13 @@ Aqui cada componente conexo é vetorizado sozinho e identificado por uma chave d
 conteúdo (caixa + hash dos pixels); só o que mudou é vetorizado, o resto vem do
 cache. `update()` devolve um `VectorDelta` (ilhas novas e chaves removidas).
 
+Contrato do delta: aplique `removed` e depois `added`. Num registro normal o
+delta é incremental; numa página nova (`Update.reset`) o `LiveVectorizer`
+entrega a substituição completa (`removed` = tudo da página antiga, `added` =
+tudo da nova, inclusive o idêntico, sem revetorizar), então tanto aplicar o
+delta quanto limpar a tela no reset e desenhar `added` estão corretos. Mudar o
+tamanho da página invalida o cache, mas o delta ainda remove as ilhas antigas.
+
 Medido (página 850x1200, esta máquina):
 
 | traços | batch | update com 1 traço novo |

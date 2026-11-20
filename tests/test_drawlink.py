@@ -198,7 +198,7 @@ def test_stop_is_checked_while_records_keep_flowing(monkeypatch):
                 lambda rec, new: count.append(1),
             ),
             kwargs={
-                "should_stop": lambda: len(count) >= 3,
+                "should_stop": lambda: len(count) >= 3 or done.is_set(),
                 "sleep": lambda _s: None,
             },
             daemon=True,

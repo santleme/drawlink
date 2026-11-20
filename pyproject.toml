@@ -9,9 +9,9 @@ description = "Live bridge: Draw ink stream -> vector/CAD/cursor. Separate proce
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
-    # Codec do stream (draw.stream) e vetorizador (draw.exporters). Fixado em
-    # branch ate a PR santleme/draw-core#60 entrar; depois vira tag.
-    "draw-core @ git+https://github.com/santleme/draw-core@stream-ink-tap",
+    # Codec do stream (draw.stream) e vetorizador (draw.exporters). Fixado no
+    # commit do draw-core que trouxe o stream (PR #60); vira tag quando houver.
+    "draw-core @ git+https://github.com/santleme/draw-core@16b61746addbdd3c5e8477e15cc97f44a2629526",
 ]
 
 [project.optional-dependencies]

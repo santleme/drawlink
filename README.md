@@ -28,5 +28,5 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check . && pytest -q
 ```
 
-A dependência do `draw-core` está fixada na branch `stream-ink-tap` até a PR
-santleme/draw-core#60 entrar; depois passa para uma tag.
+A dependência do `draw-core` está fixada no commit `16b6174` (PR
+santleme/draw-core#60); passa para uma tag quando o draw-core publicar uma.

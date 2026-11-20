@@ -1,4 +1,5 @@
 import io
+import os
 import threading
 import time
 
@@ -372,11 +373,15 @@ def test_real_closed_pipe_exits_zero_without_shutdown_error(tmp_path):
         mask = new
     path = _file(tmp_path, *data)
     # -P: nao poe o cwd no path, mas mantem o user-site (instalacao editavel).
+    # Sem PYTHONUNBUFFERED: com stdout sem buffer nao ha flush no shutdown e o
+    # teste passaria mesmo sem o redirecionamento do fd.
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
     proc = subprocess.Popen(
         [sys.executable, "-P", "-m", "drawlink.cli", "watch", str(path)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=tmp_path,
+        env=env,
     )
     # Prazo duro para qualquer leitura bloqueante: mata o filho e o teste falha.
     watchdog = threading.Timer(30, proc.kill)

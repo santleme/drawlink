@@ -23,6 +23,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .hub import CLOSED, encode_event
 
 MAX_VIEWERS = 8
+# Conexoes simultaneas (qualquer rota, autenticada ou nao): o excedente e fechado
+# na hora. Com o prazo de E/S abaixo isso limita o que um cliente local sem token
+# consegue ocupar (nao impede: quem controla a maquina local sempre pode negar
+# servico, so fica limitado e temporario).
+MAX_CONNECTIONS = 32
+# Prazo de leitura/escrita por conexao: cliente que nao manda o pedido, ou nao
+# drena o fluxo, e derrubado em vez de segurar o worker e a vaga para sempre.
+IO_TIMEOUT_S = 10.0
 KEEPALIVE_S = 15.0
 # Com que frequencia o handler ocioso confere se o navegador ja fechou a conexao:
 # sem isso a vaga ficaria presa ate a proxima escrita de keepalive falhar.
@@ -96,6 +104,7 @@ def _make_handler(hub, token, render_svg, allowed_hosts, viewers):
     class Handler(BaseHTTPRequestHandler):
         server_version = "drawlink"
         sys_version = ""
+        timeout = IO_TIMEOUT_S
 
         def log_message(self, *_args):
             pass
@@ -123,12 +132,16 @@ def _make_handler(hub, token, render_svg, allowed_hosts, viewers):
             offered = parts[1].encode()
             if not hmac.compare_digest(offered, token.encode()):
                 return None
+            if len(parts) == 2:
+                return "/@slashless"  # /TOKEN sem barra: o caminho relativo quebraria
             return "/" + "/".join(parts[2:])
 
         def do_GET(self):  # noqa: N802 - API do BaseHTTPRequestHandler
             route = self._route()
             if route is None:
                 return self._send(404, b"nao encontrado\n")
+            if route == "/@slashless":
+                return self._send(308, b"", extra=(("Location", f"/{token}/"),))
             if route == "/":
                 csp = (
                     "default-src 'none'; script-src 'unsafe-inline'; "
@@ -154,6 +167,8 @@ def _make_handler(hub, token, render_svg, allowed_hosts, viewers):
         do_HEAD = do_GET  # noqa: N815
 
         def _events(self):
+            if self.command == "HEAD":  # so os cabecalhos: sem assinar o hub
+                return self._send(200, b"", "text/event-stream")
             if not viewers.acquire(blocking=False):
                 return self._send(503, b"visualizadores demais\n")
             sub = None
@@ -193,6 +208,32 @@ def _make_handler(hub, token, render_svg, allowed_hosts, viewers):
     return Handler
 
 
+class _CappedServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer que recusa conexoes alem de `max_connections`."""
+
+    daemon_threads = True
+
+    def __init__(self, address, handler, max_connections):
+        super().__init__(address, handler)
+        self._slots = threading.BoundedSemaphore(max_connections)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 class LiveServer:
     """Servidor em thread propria; `url` ja traz o token."""
 
@@ -204,8 +245,7 @@ class LiveServer:
         # recebe um conjunto que e preenchido logo abaixo.
         allowed = set()
         handler = _make_handler(hub, self.token, render_svg, allowed, self._viewers)
-        self._httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
-        self._httpd.daemon_threads = True
+        self._httpd = _CappedServer(("127.0.0.1", port), handler, MAX_CONNECTIONS)
         self.port = self._httpd.server_address[1]
         allowed.update(
             {f"127.0.0.1:{self.port}", f"localhost:{self.port}", f"[::1]:{self.port}"}

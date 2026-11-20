@@ -68,12 +68,15 @@ def test_elements_match_the_draw_core_writer_line_by_line(tmp_path):
         assert element in ref_lines
 
 
-def test_atomic_file_is_identical_to_the_core_writer_and_private(tmp_path):
+def test_atomic_file_uses_the_core_writer_and_is_private(tmp_path):
     sx, sy = scale_for(850, 1200, 210.0, 297.0)
     reference = tmp_path / "ref.svg"
     write_svg(
         _lines(), reference, 850, 1200, 210.0, 297.0, 0.5, scale_mm_per_px=(sx, sy)
     )
+    # Paridade do ESCRITOR e da escala (mesmas polilinhas nos dois). A geometria do
+    # arquivo ao vivo vem do vetorizador incremental, equivalente ao batch dentro dos
+    # limites medidos no M2 (tests/test_incremental.py), nao byte a byte.
     out = tmp_path / "live.svg"
     write_svg_atomic(_lines(), out, (850, 1200), (210.0, 297.0), (sx, sy))
     assert out.read_text() == reference.read_text()

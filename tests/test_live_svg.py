@@ -416,3 +416,222 @@ def test_real_cli_serve_subprocess_exits_zero_on_sigterm(tmp_path):
         proc.wait()
         pub.close()
     assert status == 0
+
+
+# ------------------------------------------------- revisao da PR #4
+
+
+def test_sink_reset_removes_every_known_element_from_the_hub():
+    live, sink = LiveVectorizer(), SvgLiveSink()
+    try:
+        _feed(
+            live,
+            sink,
+            stream.pack_full(1, 1, 0, _page(((100, 100), (300, 160))), (210.0, 297.0)),
+        )
+        assert len(sink.hub.snapshot()[2]["add"]) == 1
+        sink.reset()
+        assert sink.hub.snapshot()[2]["add"] == []
+    finally:
+        sink.close()
+
+
+def test_serve_reconnect_does_not_leave_stale_ink_in_the_viewer(tmp_path):
+    """O Draw reinicia na mesma porta e mesma pagina: o desenho antigo some."""
+    pub = stream.InkStreamPublisher(port=0, token=TOKEN, log=lambda *_: None)
+    port = pub.port
+    tok = tmp_path / "tok"
+    tok.write_text(TOKEN)
+    box, ready, stop = {}, threading.Event(), threading.Event()
+
+    def on_ready(server, sink):
+        box["hub"], box["server"] = sink.hub, server
+        ready.set()
+
+    thread = threading.Thread(
+        target=cli.serve,
+        args=(f"tcp://127.0.0.1:{port}", str(tok)),
+        kwargs={
+            "http_port": 0,
+            "should_stop": stop.is_set,
+            "on_ready": on_ready,
+            "log": lambda *_: None,
+        },
+        daemon=True,
+    )
+    thread.start()
+    second = None
+    try:
+        assert ready.wait(10)
+        hub = box["hub"]
+        pub.publish(contracts.InkPublication(1, 1, _page(((100, 100), (300, 160)))))
+        assert _wait(lambda: len(hub.snapshot()[2]["add"]) == 1)
+        old_id = hub.snapshot()[2]["add"][0][0]
+        pub.close()
+        second = stream.InkStreamPublisher(port=port, token=TOKEN, log=lambda *_: None)
+        second.publish(contracts.InkPublication(1, 1, _page(((400, 500), (600, 700)))))
+        assert _wait(
+            lambda: (
+                [i for i, _ in hub.snapshot()[2]["add"]] not in ([], [old_id])
+                and old_id not in [i for i, _ in hub.snapshot()[2]["add"]]
+            ),
+            15,
+        )
+        assert len(hub.snapshot()[2]["add"]) == 1  # so a pagina nova
+    finally:
+        stop.set()
+        thread.join(timeout=15)
+        pub.close()
+        if second is not None:
+            second.close()
+
+
+def _recording(tmp_path):
+    rec = tmp_path / "r.drawink"
+    rec.write_bytes(
+        stream.pack_full(1, 1, 0, _page(((100, 100), (300, 160))), (210.0, 297.0))
+    )
+    return rec
+
+
+def test_serve_holds_the_final_result_after_a_short_replay(tmp_path):
+    rec = _recording(tmp_path)
+    box, ready, stop = {}, threading.Event(), threading.Event()
+    thread = threading.Thread(
+        target=cli.serve,
+        args=(str(rec),),
+        kwargs={
+            "http_port": 0,
+            "should_stop": stop.is_set,
+            "on_ready": lambda server, sink: (
+                box.update(server=server, sink=sink),
+                ready.set(),
+            ),
+            "log": lambda *_: None,
+        },
+        daemon=True,
+    )
+    thread.start()
+    try:
+        assert ready.wait(10)
+        assert _wait(lambda: box["sink"].hub.version >= 1)
+        time.sleep(0.5)  # o replay acabou faz tempo: o servidor ainda responde
+        assert thread.is_alive()
+        conn, resp = _get(box["server"], f"/{box['server'].token}/drawing.svg")
+        assert resp.status == 200 and b"<path" in resp.read()
+        conn.close()
+    finally:
+        stop.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+
+def test_serve_no_hold_exits_when_the_replay_ends(tmp_path):
+    rec = _recording(tmp_path)
+    assert cli.serve(str(rec), http_port=0, hold=False, log=lambda *_: None) == 1
+
+
+def test_serve_refuses_to_overwrite_its_own_recording(tmp_path):
+    rec = _recording(tmp_path)
+    before = rec.read_bytes()
+    with pytest.raises(ValueError, match="gravacao"):
+        cli.serve(str(rec), svg_out=str(rec))
+    link = tmp_path / "link.svg"
+    link.symlink_to(rec)
+    with pytest.raises(ValueError, match="gravacao"):
+        cli.serve(str(rec), svg_out=str(link))
+    with pytest.raises(ValueError, match="gravacao"):
+        cli.serve(str(rec), svg_out=str(tmp_path / "." / "r.drawink"))
+    assert rec.read_bytes() == before  # a gravacao segue intacta
+
+
+def test_serve_fails_when_the_svg_could_not_be_written(tmp_path):
+    rec = _recording(tmp_path)
+    with pytest.raises(OSError, match="nao consegui escrever"):
+        cli.serve(
+            str(rec),
+            svg_out=str(tmp_path / "no-such-dir" / "o.svg"),
+            min_interval_s=0,
+            log=lambda *_: None,
+        )
+
+
+def test_head_on_events_does_not_subscribe(srv):
+    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
+    conn.request(
+        "HEAD", f"/{srv.token}/events", headers={"Host": f"127.0.0.1:{srv.port}"}
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200 and resp.read() == b""
+    assert srv.hub.subscriber_count() == 0
+    conn.close()
+
+
+def test_slashless_viewer_url_redirects_to_the_slash_form(srv):
+    conn, resp = _get(srv, f"/{srv.token}")
+    assert resp.status == 308
+    assert resp.getheader("Location") == f"/{srv.token}/"
+    conn.close()
+
+
+def test_stalled_viewer_is_dropped_by_the_write_timeout(monkeypatch):
+    import socket
+
+    monkeypatch.setattr(server_module, "IO_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(server_module, "MAX_VIEWERS", 1)
+    hub = Hub()
+    server = LiveServer(hub, lambda: "<svg/>")
+    try:
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        sock.connect(("127.0.0.1", server.port))
+        sock.sendall(
+            f"GET /{server.token}/events HTTP/1.0\r\nHost: 127.0.0.1:{server.port}\r\n\r\n".encode()
+        )  # nunca le a resposta
+        assert _wait(lambda: hub.subscriber_count() == 1)
+        big = "<g id='x'>" + "a" * 1_000_000 + "</g>"
+        for i in range(40):  # bem mais que os buffers do socket
+            hub.apply((1.0, 1.0), [], [(f"i{i}", big)])
+        # a escrita trava no buffer cheio; o prazo de E/S derruba e libera a vaga
+        assert _wait(lambda: hub.subscriber_count() == 0, 15)
+        c2, r2 = _get(server, f"/{server.token}/events")
+        assert r2.status == 200  # a vaga voltou
+        r2.close()
+        c2.close()
+        sock.close()
+    finally:
+        server.close()
+
+
+def test_connection_cap_refuses_extra_idle_connections(monkeypatch):
+    import socket
+
+    monkeypatch.setattr(server_module, "MAX_CONNECTIONS", 2)
+    server = LiveServer(Hub(), lambda: "<svg/>")
+    idle = []
+    try:
+        for _ in range(2):  # ocupam os dois workers sem mandar pedido
+            s = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+            idle.append(s)
+        time.sleep(0.3)
+        third = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+        third.settimeout(3)
+        assert third.recv(1) == b""  # recusada de cara
+        third.close()
+        for s in idle:
+            s.close()
+        assert _wait(lambda: _status(server) == 200, 5)  # liberou: atende de novo
+    finally:
+        for s in idle:
+            s.close()
+        server.close()
+
+
+def _status(server):
+    try:
+        conn, resp = _get(server, f"/{server.token}/drawing.svg", timeout=2)
+        status = resp.status
+        conn.close()
+        return status
+    except OSError:
+        return None

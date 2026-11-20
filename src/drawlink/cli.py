@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import threading
+import time
 
 from draw.protocol import AuthenticationError, ProtocolError, resolve_token
 
@@ -83,6 +84,16 @@ def watch(
     return count
 
 
+def _same_file(a, b):
+    """True se a e b sao o mesmo arquivo (existente) ou o mesmo caminho resolvido."""
+    try:
+        if os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b):
+            return True
+    except OSError:
+        pass
+    return os.path.realpath(a) == os.path.realpath(b)
+
+
 def serve(
     spec,
     token_file=None,
@@ -94,8 +105,14 @@ def serve(
     should_stop=lambda: False,
     log=None,
     on_ready=None,
+    hold=None,
 ):
-    """Segue FONTE e publica o SVG ao vivo (arquivo atomico e/ou HTTP local)."""
+    """Segue FONTE e publica o SVG ao vivo (arquivo atomico e/ou HTTP local).
+
+    hold: depois que uma gravacao termina, continua servindo o resultado final
+    ate should_stop (senao a URL impressa morreria antes de ser aberta). Padrao:
+    verdadeiro quando ha --http-port e a fonte e um arquivo.
+    """
     from .server import LiveServer
     from .sink import SvgLiveSink
 
@@ -103,6 +120,13 @@ def serve(
         raise ValueError("serve precisa de --svg-out e/ou --http-port")
     if max_records is not None and max_records <= 0:
         return 0
+    endpoint = source.parse_endpoint(spec)
+    if endpoint is None and svg_out is not None and _same_file(spec, svg_out):
+        raise ValueError(
+            f"--svg-out ({svg_out}) e a propria gravacao: escrever o SVG destruiria o replay"
+        )
+    if hold is None:
+        hold = endpoint is None and http_port is not None
     log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
     live = LiveVectorizer()
     sink = SvgLiveSink(
@@ -121,16 +145,20 @@ def serve(
             nonlocal count
             if new_connection:
                 live.clear()
+                sink.reset()
             _update, delta = live.feed(record)
             sink.apply(live, delta)
             count += 1
             return max_records is not None and count >= max_records
 
-        endpoint = source.parse_endpoint(spec)
         if endpoint is None:
             for record in source.from_file(spec):
                 if on_record(record, False) or should_stop():
                     break
+            if hold and server is not None:
+                log("replay terminou; servindo o resultado final (Ctrl-C encerra)")
+                while not should_stop():
+                    time.sleep(0.2)
         else:
             token = resolve_token(token_file=token_file)
             source.follow(
@@ -140,6 +168,8 @@ def serve(
         if server is not None:
             server.close()
         sink.close()
+    if svg_out is not None and sink.write_error is not None:
+        raise OSError(f"nao consegui escrever {svg_out}: {sink.write_error}")
     return count
 
 
@@ -185,6 +215,12 @@ def main(argv=None):
     )
     sv.add_argument("--stroke-mm", type=float, default=0.5)
     sv.add_argument("--max-records", type=int, default=None)
+    sv.add_argument(
+        "--no-hold",
+        action="store_true",
+        help="com uma gravacao, encerra ao fim dela em vez de continuar servindo "
+        "o resultado final no visualizador",
+    )
     args = parser.parse_args(argv)
     if args.command == "serve":
         if args.svg_out is None and args.http_port is None:
@@ -200,6 +236,7 @@ def main(argv=None):
                 stroke_mm=args.stroke_mm,
                 max_records=args.max_records,
                 should_stop=stop.is_set,
+                hold=False if args.no_hold else None,
             )
         except KeyboardInterrupt:
             return 130

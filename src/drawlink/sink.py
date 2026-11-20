@@ -42,11 +42,15 @@ class SvgLiveSink:
         self._log = log
         self._scale_key = None
         self._known = set()  # ids de elementos que o hub tem
+        self._view = None
         self._cond = threading.Condition()
         self._snapshot = None  # (polilinhas, grade, papel, escala)
         self._dirty = False
         self._closed = False
         self.writes = 0
+        self.write_error = (
+            None  # ultima falha de escrita, ou None se a ultima deu certo
+        )
         self._thread = None
         if svg_out is not None:
             self._thread = threading.Thread(
@@ -72,11 +76,24 @@ class SvgLiveSink:
         ]
         self._known.difference_update(removed)
         self._known.update(eid for eid, _ in elements)
+        self._view = paper
         self.hub.apply(paper, removed, elements)
         with self._cond:
             self._snapshot = (list(live.vectors.polylines), grid, paper, (sx, sy))
             self._dirty = True
             self._cond.notify()
+
+    def reset(self):
+        """Nova conexao com o Draw: esquece o desenho e avisa os visualizadores.
+
+        O stream recomeca por um FULL, e o `LiveVectorizer` esquece as ilhas
+        antigas; sem isto o hub manteria na tela as que nao existem mais.
+        """
+        removed = list(self._known)
+        self._known.clear()
+        self._scale_key = None
+        if removed and self._view is not None:
+            self.hub.apply(self._view, removed, [])
 
     def render_svg(self):
         """O SVG atual como texto (o mesmo `write_svg` do export final)."""
@@ -106,7 +123,9 @@ class SvgLiveSink:
                 lines, grid, paper, scale = snap
                 write_svg_atomic(lines, self._svg_out, grid, paper, scale, self._stroke)
                 self.writes += 1
+                self.write_error = None
             except Exception as error:  # noqa: BLE001 - a escrita nunca derruba o stream
+                self.write_error = error
                 self._log(f"drawlink: falha ao escrever {self._svg_out}: {error}")
 
     def close(self):

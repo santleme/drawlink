@@ -57,13 +57,18 @@ ordem de grandeza.
 
 Os números mudaram muito com o #65: o batch de 300 traços era 8,9 s com o
 vetorizador anterior, e o ganho do incremental caiu de milhares de vezes para
-uns 10 a 50. Ele ainda ajuda (um update fica bem abaixo de um quadro a 12 FPS,
-~83 ms; o batch de uma página cheia passa disso), mas a pergunta "vale manter o incremental
-frente a um batch de ~250 ms?" é legítima e fica em aberto para o M3.
+uns 10 a 50.
+
+**Decisão: o incremental fica.** Um batch de ~300 ms numa página cheia
+(296-324 ms na tabela) estoura o orçamento por quadro e disputa CPU com o
+detector do Draw; um update de 3,6-6,3 ms cabe com folga. A equivalência com o
+batch é geométrica (limites abaixo), coberta pelos testes. O motor está
+congelado: nem o `fill_pinholes` (2,2-3,2 ms) nem o pior caso abaixo serão
+otimizados agora.
 
 **Limite conhecido:** o custo de um update é proporcional ao componente conexo
 que ele toca. Um traço que encosta no maior componente (medido: 257 polilinhas
-interligadas, 819x928 px) custa ~185 ms, perto do batch da página (~270 ms).
+interligadas, 819x928 px) custa ~185 ms, perto do batch dessa mesma página (~270 ms).
 Com o vetorizador anterior esse caso custava ~5 s. Cortar isso exigiria
 vetorizar por trechos dentro do componente (não feito).
 

@@ -361,21 +361,34 @@ def test_real_closed_pipe_exits_zero_without_shutdown_error(tmp_path):
     import subprocess
     import sys
 
+    # Saida bem acima do buffer de 64 KiB do pipe: o filho bloqueia na escrita
+    # ate o leitor fechar, entao o BrokenPipeError acontece sempre.
     data = [stream.pack_full(1, 1, 0, _mask(), (210.0, 297.0))]
     mask = _mask()
-    for i in range(2, 400):
+    for i in range(2, 4000):
         new = mask.copy()
         new[i % 40, i % 30] = 255
         data.append(stream.pack_delta(1, i, i, new, (i % 30, i % 40, 1, 1)))
         mask = new
     path = _file(tmp_path, *data)
+    # -P: nao poe o cwd no path, mas mantem o user-site (instalacao editavel).
     proc = subprocess.Popen(
-        [sys.executable, "-I", "-m", "drawlink.cli", "watch", str(path)],
+        [sys.executable, "-P", "-m", "drawlink.cli", "watch", str(path)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        cwd=tmp_path,
     )
-    assert proc.stdout.readline().startswith(b"gen=1")
-    proc.stdout.close()  # o leitor (ex.: head) saiu
-    stderr = proc.stderr.read()
-    assert proc.wait(timeout=20) == 0
+    # Prazo duro para qualquer leitura bloqueante: mata o filho e o teste falha.
+    watchdog = threading.Timer(30, proc.kill)
+    watchdog.start()
+    try:
+        assert proc.stdout.readline().startswith(b"gen=1")
+        proc.stdout.close()  # o leitor (ex.: head) saiu
+        status = proc.wait()
+        stderr = proc.stderr.read()
+    finally:
+        watchdog.cancel()
+        proc.kill()
+        proc.wait()
+    assert status == 0, stderr
     assert stderr == b""

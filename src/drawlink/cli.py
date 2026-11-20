@@ -1,6 +1,7 @@
 """CLI do drawlink: `drawlink watch FONTE`."""
 
 import argparse
+import os
 import sys
 
 from draw.protocol import AuthenticationError, ProtocolError, resolve_token
@@ -67,6 +68,24 @@ def watch(
     return count
 
 
+def _detach_stdout():
+    """Aponta o fd 1 para /dev/null depois de um pipe fechado.
+
+    O CPython tenta descarregar o buffer do stdout de novo ao encerrar; com o
+    pipe ainda quebrado isso imprime "Exception ignored" e muda o status para
+    120 (derruba `| head` sob pipefail). Fica aqui, na fronteira do CLI, e nao
+    em watch(), para nao mexer em streams passados por quem chama.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        finally:
+            os.close(devnull)
+    except (OSError, ValueError, AttributeError):
+        pass  # stdout trocado/sem fd: nada a redirecionar
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="drawlink")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -80,6 +99,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         return 130
     except OutputClosed:
+        _detach_stdout()
         return 0
     except (AuthenticationError, ProtocolError, OSError, ValueError) as error:
         print(f"Erro: {error}", file=sys.stderr)

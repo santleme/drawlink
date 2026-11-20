@@ -354,3 +354,28 @@ def test_closed_stdout_ends_watch_instead_of_reconnecting_forever():
                 )
     finally:
         pub.close()
+
+
+def test_real_closed_pipe_exits_zero_without_shutdown_error(tmp_path):
+    """Pipe de verdade: o CPython re-tenta o flush no shutdown (status 120)."""
+    import subprocess
+    import sys
+
+    data = [stream.pack_full(1, 1, 0, _mask(), (210.0, 297.0))]
+    mask = _mask()
+    for i in range(2, 400):
+        new = mask.copy()
+        new[i % 40, i % 30] = 255
+        data.append(stream.pack_delta(1, i, i, new, (i % 30, i % 40, 1, 1)))
+        mask = new
+    path = _file(tmp_path, *data)
+    proc = subprocess.Popen(
+        [sys.executable, "-I", "-m", "drawlink.cli", "watch", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stdout.readline().startswith(b"gen=1")
+    proc.stdout.close()  # o leitor (ex.: head) saiu
+    stderr = proc.stderr.read()
+    assert proc.wait(timeout=20) == 0
+    assert stderr == b""

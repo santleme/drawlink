@@ -16,12 +16,45 @@ publicador escreve v2 e o leitor ainda aceita gravações v1).
 - **DRAL v2:** `Update.captured_at_us`, `Update.anchor_corners` e
   `Update.latency_us` (= `ts_us - captured_at_us`). `watch` imprime `lat=` quando
   há dado. Gravações v1 continuam reproduzindo, sem esses campos (`None`).
-- M3 SVG ao vivo, M4 DXF, M5 cursor (Windows): ainda não.
+- **M3:** SVG ao vivo (`drawlink serve`): arquivo atômico e/ou visualizador
+  HTTP local com SSE. Ver abaixo.
+- M4 DXF, M5 cursor (Windows): ainda não.
 
 **O que `latency_us` mede e o que não mede:** só o trecho captura -> publicação
 dentro do Draw (mesmo relógio monotônico). Não inclui a câmera, o transporte
 nem o processamento deste lado, então **não substitui** o Step 0 de latência
 vidro->tinta do draw-core, que filma um cronômetro.
+
+## SVG ao vivo (M3)
+
+```bash
+drawlink serve tcp://127.0.0.1:8766 --token-file token.txt \
+    --svg-out desenho.svg --http-port 0
+# stderr: visualizador: http://127.0.0.1:PORTA/TOKEN/
+```
+
+- `--svg-out`: o SVG inteiro, reescrito de forma **atômica** (temporário +
+  `os.replace`, modo `0600`) no máximo a cada 0,25 s e sempre ao encerrar, então
+  um leitor (AutoCAD, navegador) nunca vê um arquivo pela metade. É gerado pelo
+  próprio `write_svg` do draw-core, com a escala travada do formato: o arquivo
+  ao vivo é idêntico ao do export final (há teste byte a byte).
+- `--http-port`: visualizador local. `/TOKEN/` é a página, `/TOKEN/drawing.svg`
+  o desenho atual e `/TOKEN/events` um fluxo SSE (um `snapshot` ao conectar,
+  depois um `delta` por atualização, só com as ilhas que mudaram).
+- **A tinta é privada**, então o servidor só escuta em `127.0.0.1`, o token
+  (aleatório, por execução) vai no caminho e é comparado em tempo constante, o
+  cabeçalho `Host` é conferido (contra DNS rebinding), não há CORS,
+  `Referrer-Policy: no-referrer` (o token está na URL) e há teto de 8
+  visualizadores. O token vai na URL, então não cole a URL em lugar público.
+- Um visualizador lento é derrubado em vez de segurar o stream; o navegador
+  reconecta e recebe um snapshot novo.
+- **Limites:** o JavaScript do visualizador foi checado em sintaxe e a sua lógica
+  foi exercitada num DOM simulado em Node, mas **não** foi aberto em navegador
+  real. A página não faz zoom nem pan. O traço usa largura fixa
+  (`--stroke-mm`, 0,5), sem estimar a largura real da caneta.
+- A escala usa `draw.config` (grade e papel conhecidos => mm/px uniforme do
+  formato). Em paisagem isso dá a escala uniforme do formato, enquanto o
+  `write_svg` chamado sem `formats` usaria a razão por eixo, que difere em ~0,2%.
 
 ## Vetorização incremental (M2)
 

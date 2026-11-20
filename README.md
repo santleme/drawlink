@@ -18,8 +18,11 @@ Contrato do stream: `bridge/STREAM.md` no draw-core (protocolo `DRAL` v1).
 
 O `vectorize_clean` do draw-core é offline (a página inteira a cada chamada).
 Aqui cada componente conexo é vetorizado sozinho e identificado por uma chave de
-conteúdo (caixa + hash dos pixels); só o que mudou é vetorizado, o resto vem do
-cache. `update()` devolve um `VectorDelta` (ilhas novas e chaves removidas).
+conteúdo (tamanho da página + caixa + hash dos pixels); só o que mudou é
+vetorizado, o resto vem do cache. O tamanho da página entra na chave de
+propósito: o recorte é cortado nos limites dela e o afinamento trata a borda de
+forma especial, então redimensionar a página substitui todas as ilhas, mesmo as
+de pixels idênticos. `update()` devolve um `VectorDelta` (ilhas novas e chaves removidas).
 
 Contrato do delta: aplique `removed` e depois `added`. Num registro normal o
 delta é incremental; numa página nova (`Update.reset`) o `LiveVectorizer`

@@ -189,15 +189,27 @@ def test_stop_is_checked_while_records_keep_flowing(monkeypatch):
 
         done = threading.Event()
         threading.Thread(target=feed, daemon=True).start()
-        source.follow(
-            "127.0.0.1",
-            pub.port,
-            TOKEN.encode(),
-            lambda rec, new: count.append(1) and False,
-            should_stop=lambda: len(count) >= 3,
-            sleep=lambda _s: None,
+        runner = threading.Thread(
+            target=source.follow,
+            args=(
+                "127.0.0.1",
+                pub.port,
+                TOKEN.encode(),
+                lambda rec, new: count.append(1),
+            ),
+            kwargs={
+                "should_stop": lambda: len(count) >= 3,
+                "sleep": lambda _s: None,
+            },
+            daemon=True,
         )
+        runner.start()
+        # Prazo duro: uma regressao (sem checagem por registro) falha aqui em
+        # vez de travar o CI, porque o produtor nunca para sozinho.
+        runner.join(timeout=10)
+        stopped = not runner.is_alive()
         done.set()
+        assert stopped, "follow nao parou apesar de should_stop verdadeiro"
         assert len(count) == 3
     finally:
         pub.close()

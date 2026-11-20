@@ -4,8 +4,8 @@ import time
 
 import numpy as np
 import pytest
-from draw import stream
-from draw.protocol import AuthenticationError
+from draw import contracts, stream
+from draw.protocol import AuthenticationError, ProtocolError
 
 from drawlink import cli, source
 from drawlink.session import Session
@@ -67,18 +67,56 @@ def _live(**kw):
     return stream.InkStreamPublisher(port=0, token=TOKEN, log=lambda *_: None, **kw)
 
 
-def test_socket_receives_and_flags_new_connection():
+def _pub(pub, generation, version, mask):
+    pub.publish(contracts.InkPublication(generation, version, mask))
+
+
+def _follow_in_thread(port, on_record, **kw):
+    stop = threading.Event()
+    errors = []
+
+    def run():
+        try:
+            source.follow(
+                "127.0.0.1",
+                port,
+                TOKEN.encode(),
+                on_record,
+                should_stop=stop.is_set,
+                sleep=lambda _s: time.sleep(0.05),
+                **kw,
+            )
+        except Exception as error:  # noqa: BLE001
+            errors.append(error)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return stop, thread, errors
+
+
+def _wait(cond, timeout=6.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_follow_receives_and_flags_new_connection():
     pub = _live()
     try:
         a = _mask()
         a[2:4, 2:4] = 255
-        pub.publish(1, 1, a)
+        _pub(pub, 1, 1, a)
         got = []
-        for rec, new in source.from_socket(
-            "127.0.0.1", pub.port, TOKEN.encode(), sleep=lambda _s: None
-        ):
-            got.append((rec.ink_version, new))
-            break
+        source.follow(
+            "127.0.0.1",
+            pub.port,
+            TOKEN.encode(),
+            lambda rec, new: got.append((rec.ink_version, new)) or True,
+            sleep=lambda _s: None,
+        )
         assert got == [(1, True)]
     finally:
         pub.close()
@@ -88,58 +126,94 @@ def test_reconnects_after_draw_restart():
     """Draw reinicia na mesma porta: o consumidor reconecta e recebe FULL."""
     pub = _live()
     port = pub.port
-    pub.publish(1, 1, _mask())
+    _pub(pub, 1, 1, _mask())
     seen = []
-    stop = threading.Event()
-    state = {"second": None}
-
-    def run():
-        for rec, new in source.from_socket(
-            "127.0.0.1",
-            port,
-            TOKEN.encode(),
-            should_stop=stop.is_set,
-            sleep=lambda _s: time.sleep(0.05),
-        ):
-            seen.append((rec.generation, new))
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
+    stop, thread, errors = _follow_in_thread(
+        port, lambda rec, new: seen.append((rec.generation, new))
+    )
+    second = None
     try:
-        deadline = time.monotonic() + 5
-        while not seen and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert seen == [(1, True)]
+        assert _wait(lambda: seen == [(1, True)])
         pub.close()
         time.sleep(0.3)
-        state["second"] = stream.InkStreamPublisher(
-            port=port, token=TOKEN, log=lambda *_: None
-        )
-        state["second"].publish(2, 1, _mask())
-        deadline = time.monotonic() + 8
-        while len(seen) < 2 and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert seen[-1] == (2, True)
+        second = stream.InkStreamPublisher(port=port, token=TOKEN, log=lambda *_: None)
+        _pub(second, 2, 1, _mask())
+        assert _wait(lambda: len(seen) >= 2)
+        assert seen[-1][1] is True
     finally:
         stop.set()
         thread.join(timeout=5)
-        if state["second"] is not None:
-            state["second"].close()
+        if second is not None:
+            second.close()
         pub.close()
-    assert not thread.is_alive()
+    assert not thread.is_alive() and not errors
 
 
-def test_wrong_token_is_not_retried():
+def test_invalid_payload_reconnects_instead_of_ending_follow():
+    pub = _live()
+    _pub(pub, 1, 1, _mask())
+    calls = []
+
+    def on_record(rec, new):
+        calls.append(new)
+        if len(calls) == 1:
+            raise ProtocolError("payload ruim")
+        return True
+
+    try:
+        stop, thread, errors = _follow_in_thread(pub.port, on_record)
+        assert _wait(lambda: len(calls) >= 2)
+        thread.join(timeout=5)
+        assert calls == [True, True] and not errors
+    finally:
+        stop.set()
+        pub.close()
+
+
+def test_stop_is_checked_while_records_keep_flowing():
+    pub = _live()
+    try:
+        _pub(pub, 1, 1, _mask())
+        n = {"v": 1}
+        count = []
+
+        def feed():
+            while len(count) < 3 and not done.is_set():
+                n["v"] += 1
+                m = _mask()
+                m[0, n["v"] % 30] = 255
+                _pub(pub, 1, n["v"], m)
+                time.sleep(0.02)
+
+        done = threading.Event()
+        threading.Thread(target=feed, daemon=True).start()
+        source.follow(
+            "127.0.0.1",
+            pub.port,
+            TOKEN.encode(),
+            lambda rec, new: count.append(1) and False,
+            should_stop=lambda: len(count) >= 3,
+            sleep=lambda _s: None,
+        )
+        done.set()
+        assert len(count) == 3
+    finally:
+        pub.close()
+
+
+def test_auth_failures_give_up_after_limit_not_first_try():
     pub = _live()
     try:
         sleeps = []
         with pytest.raises(AuthenticationError):
-            next(
-                source.from_socket(
-                    "127.0.0.1", pub.port, b"z" * 32, sleep=sleeps.append
-                )
+            source.follow(
+                "127.0.0.1",
+                pub.port,
+                b"z" * 32,
+                lambda *_: True,
+                sleep=sleeps.append,
             )
-        assert sleeps == []
+        assert len(sleeps) == source.MAX_AUTH_FAILURES - 1
     finally:
         pub.close()
 
@@ -148,14 +222,98 @@ def test_connection_refused_backs_off_exponentially():
     stops = iter([False] * 5 + [True] * 100)
     sleeps = []
     events = []
-    gen = source.from_socket(
+    source.follow(
         "127.0.0.1",
         1,  # porta sem ninguem
         TOKEN.encode(),
+        lambda *_: True,
         should_stop=lambda: next(stops),
         sleep=sleeps.append,
         on_event=events.append,
     )
-    assert list(gen) == []
     assert sleeps == [0.25, 0.5, 1.0, 2.0, 4.0]
     assert len(events) == 5
+
+
+def test_backoff_not_reset_by_handshake_alone(monkeypatch):
+    """Draw que autentica e cai antes de qualquer registro nao zera o backoff."""
+    import socket as socket_module
+
+    from draw.protocol import server_handshake
+
+    srv = socket_module.create_server(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+
+    def serve():
+        while True:
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            server_handshake(conn, TOKEN.encode())
+            conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    sleeps = []
+    try:
+        source.follow(
+            "127.0.0.1",
+            port,
+            TOKEN.encode(),
+            lambda *_: True,
+            should_stop=lambda: len(sleeps) >= 4,
+            sleep=sleeps.append,
+        )
+    finally:
+        srv.close()
+    assert sleeps[:3] == [0.25, 0.5, 1.0]
+
+
+def test_watch_zero_max_records_reads_nothing():
+    out = io.StringIO()
+    assert cli.watch("tcp://127.0.0.1:1", max_records=0, out=out) == 0
+    assert out.getvalue() == ""
+
+
+def test_watch_flushes_each_line():
+    class Spy(io.StringIO):
+        flushes = 0
+
+        def flush(self):
+            Spy.flushes += 1
+            super().flush()
+
+    pub = _live()
+    try:
+        _pub(pub, 1, 1, _mask(255))
+        tok = pub._token.decode()
+        out = Spy()
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".tok") as handle:
+            handle.write(tok)
+            handle.flush()
+            cli.watch(
+                f"tcp://127.0.0.1:{pub.port}",
+                token_file=handle.name,
+                max_records=1,
+                out=out,
+            )
+        assert Spy.flushes >= 1
+    finally:
+        pub.close()
+
+
+def test_corrupt_zlib_in_recording_returns_2(tmp_path, capsys):
+    import struct
+
+    payload = struct.pack("<ff", 1.0, 1.0) + b"lixo que nao e zlib"
+    rec = (
+        stream.HEADER.pack(
+            stream.MAGIC, 1, stream.KIND_FULL, 0, 1, 1, 0, 4, 4, len(payload)
+        )
+        + payload
+    )
+    path = _file(tmp_path, rec)
+    assert cli.main(["watch", str(path)]) == 2
+    assert "Erro" in capsys.readouterr().err

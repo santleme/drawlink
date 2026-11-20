@@ -18,25 +18,44 @@ def _describe(update, session):
     )
 
 
-def watch(spec, token_file=None, max_records=None, out=sys.stdout, log=None):
+def watch(
+    spec,
+    token_file=None,
+    max_records=None,
+    out=sys.stdout,
+    log=None,
+    should_stop=lambda: False,
+):
     """Aplica registros de FONTE e imprime uma linha por atualizacao."""
-    log = log or (lambda msg: print(msg, file=sys.stderr))
+    if max_records is not None and max_records <= 0:
+        return 0
+    log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
     session = Session()
     count = 0
-    endpoint = source.parse_endpoint(spec)
-    if endpoint is None:
-        records = ((r, False) for r in source.from_file(spec))
-    else:
-        token = resolve_token(token_file=token_file)
-        records = source.from_socket(*endpoint, token, on_event=log)
-    for record, new_connection in records:
+
+    def on_record(record, new_connection):
+        nonlocal count
         if new_connection:
             session.clear()
         update = session.feed(record)
-        print(_describe(update, session), file=out)
+        print(_describe(update, session), file=out, flush=True)
         count += 1
-        if max_records is not None and count >= max_records:
-            break
+        return max_records is not None and count >= max_records
+
+    endpoint = source.parse_endpoint(spec)
+    if endpoint is None:
+        for record in source.from_file(spec):
+            if on_record(record, False):
+                break
+    else:
+        token = resolve_token(token_file=token_file)
+        source.follow(
+            *endpoint,
+            token,
+            on_record,
+            should_stop=should_stop,
+            on_event=log,
+        )
     return count
 
 

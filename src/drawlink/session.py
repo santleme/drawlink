@@ -1,7 +1,9 @@
 """Estado do lado consumidor: aplica registros DRAL e sinaliza geracao nova."""
 
+import zlib
 from dataclasses import dataclass
 
+from draw.protocol import ProtocolError
 from draw.stream import InkCanvas, InkRecord
 
 
@@ -41,7 +43,12 @@ class Session:
 
     def feed(self, record: InkRecord) -> Update:
         previous = self._canvas.generation
-        box = self._canvas.apply(record)
+        try:
+            box = self._canvas.apply(record)
+        except (zlib.error, ValueError) as error:
+            # Defesa em profundidade: o codec ja converte, mas payload
+            # invalido nunca pode escapar como excecao crua.
+            raise ProtocolError(f"registro invalido: {error}") from error
         return Update(
             box=box,
             reset=previous != record.generation,

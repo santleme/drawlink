@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
-from draw.exporters.vectorize import vectorize_clean
+from draw.exporters.vectorize import fill_pinholes, vectorize_clean
 
 # Folga ao redor do componente recortado: o afinamento e a deteccao de grau
 # olham a vizinhanca 3x3, e a borda do recorte nao pode parecer borda de imagem
@@ -117,7 +117,13 @@ class IncrementalVectorizer:
             # as ilhas antigas; reset() e quem esquece tudo.
             self._cache.clear()
         self._shape = mask.shape
-        ink = np.ascontiguousarray(mask > 0, dtype=np.uint8)
+        # Buracos pequenos sao preenchidos NA PAGINA antes de rotular: o batch
+        # preenche antes de remover poeira, entao uma pinta isolada dentro de um
+        # buraco de 10 px o leva a 9 e ele vira tinta. Rotulando a pagina ja
+        # preenchida, a pinta entra no componente do anel. A etapa e idempotente
+        # dentro do recorte (os buracos restantes sao maiores que o limite ou
+        # tocam a borda da pagina).
+        ink = np.ascontiguousarray(fill_pinholes(mask > 0), dtype=np.uint8)
         count, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
         live = {}
         fresh = {}

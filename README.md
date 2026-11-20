@@ -4,7 +4,8 @@ Ponte ao vivo entre o stream de tinta do [Draw](https://github.com/santleme/draw
 e vetor/CAD/cursor. Processo separado: se o drawlink cair, o Draw segue
 digitalizando (o publicador do Draw nunca bloqueia o laço).
 
-Contrato do stream: `bridge/STREAM.md` no draw-core (protocolo `DRAL` v1).
+Contrato do stream: `bridge/STREAM.md` no draw-core (protocolo `DRAL`; o
+publicador escreve v2 e o leitor ainda aceita gravações v1).
 
 ## Estado
 
@@ -39,19 +40,34 @@ tudo da nova, inclusive o idêntico, sem revetorizar), então tanto aplicar o
 delta quanto limpar a tela no reset e desenhar `added` estão corretos. Mudar o
 tamanho da página invalida o cache, mas o delta ainda remove as ilhas antigas.
 
-Medido (página 850x1200, esta máquina):
+Medido (página 850x1200, esta máquina, contra o draw-core `91916f4`, com o
+vetorizador do #65):
 
 | traços | batch | update com 1 traço novo |
 |-------:|------:|------------------------:|
-| 30     | 99 ms | 1,6 ms |
-| 120    | 574 ms | 2,1 ms |
-| 300    | 8,9 s | 3,4 ms |
+| 30     | 74 ms | 4,7 ms |
+| 120    | 108 ms | 4,3 ms |
+| 300    | 248 ms | 5,3 ms |
+
+Cerca de 7 ms de cada update é o preenchimento de buracos da página inteira
+(ver abaixo); o resto é vetorizar só o que mudou.
+
+Os números mudaram muito com o #65: o batch de 300 traços era 8,9 s com o
+vetorizador anterior, e o ganho do incremental caiu de milhares de vezes para
+10 a 50. Ele ainda ajuda (um update fica abaixo de um quadro a 12 FPS, o batch
+não garante isso numa página cheia), mas a pergunta "vale manter o incremental
+frente a um batch de ~250 ms?" é legítima e fica em aberto para o M3.
 
 **Limite conhecido:** o custo de um update é proporcional ao componente conexo
-que ele toca. Um traço que encosta num componente que cobre a página inteira
-(medido: 510 polilinhas interligadas) custa ~5 s, perto do batch. Escrita
-normal e formulários esparsos ficam longe disso; uma grade contínua não. Cortar
-isso exigiria vetorizar por trechos dentro do componente (não feito).
+que ele toca. Um traço que encosta no maior componente (medido: 257 polilinhas
+interligadas, 819x928 px) custa ~185 ms, perto do batch da página (~270 ms).
+Com o vetorizador anterior esse caso custava ~5 s. Cortar isso exigiria
+vetorizar por trechos dentro do componente (não feito).
+
+**Buracos pequenos:** o batch preenche buracos de até 9 px antes de remover
+poeira, então uma pinta isolada dentro de um buraco de 10 px o leva a 9 e ele
+vira tinta. Para o incremental ver o mesmo, os buracos são preenchidos na
+página inteira antes de rotular os componentes.
 
 **Equivalência com o batch (`vectorize_clean`)** é geométrica, não bit a bit,
 e os testes fixam os limites medidos: com um componente, mesma contagem de

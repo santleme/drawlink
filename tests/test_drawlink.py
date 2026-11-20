@@ -473,3 +473,31 @@ def test_watch_prints_latency_only_when_known(tmp_path):
     out2 = io.StringIO()
     cli.watch(str(without), out=out2)
     assert "lat=" not in out2.getvalue()
+
+
+def test_update_with_anchor_has_value_semantics_and_is_immutable(tmp_path):
+    corners = np.array([[10, 20], [300, 22], [305, 400], [8, 398]], np.float32)
+    rec = stream.pack_full(
+        1, 1, 5, _mask(), (1.0, 1.0), captured_at_us=1, anchor=corners
+    )
+    path = _file(tmp_path, rec)
+    a = next(Session().feed(r) for r in source.from_file(path))
+    b = next(Session().feed(r) for r in source.from_file(path))
+    assert a == b and hash(a) == hash(b)  # replays separados: mesmo valor
+    assert isinstance(a.anchor_corners, tuple)
+
+
+def test_updates_do_not_share_the_session_anchor(tmp_path):
+    corners = np.array([[1, 2], [3, 4], [5, 6], [7, 8]], np.float32)
+    mask = _mask()
+    changed = mask.copy()
+    changed[1, 1] = 255
+    path = _file(
+        tmp_path,
+        stream.pack_full(1, 1, 5, mask, (1.0, 1.0), captured_at_us=1, anchor=corners),
+        stream.pack_delta(1, 2, 6, changed, (1, 1, 1, 1), captured_at_us=2),
+    )
+    session = Session()
+    first, second = (session.feed(r) for r in source.from_file(path))
+    assert first.anchor_corners == second.anchor_corners
+    assert session.anchor_corners == first.anchor_corners

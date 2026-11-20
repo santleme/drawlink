@@ -109,10 +109,18 @@ def _make_handler(hub, token, render_svg, allowed_hosts, viewers):
         def log_message(self, *_args):
             pass
 
-        def _send(self, status, body=b"", ctype="text/plain; charset=utf-8", extra=()):
+        def _send(
+            self,
+            status,
+            body=b"",
+            ctype="text/plain; charset=utf-8",
+            extra=(),
+            length=True,
+        ):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
+            if length:  # fluxo SSE nao declara tamanho: o HEAD tambem nao
+                self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -168,7 +176,7 @@ def _make_handler(hub, token, render_svg, allowed_hosts, viewers):
 
         def _events(self):
             if self.command == "HEAD":  # so os cabecalhos: sem assinar o hub
-                return self._send(200, b"", "text/event-stream")
+                return self._send(200, b"", "text/event-stream", length=False)
             if not viewers.acquire(blocking=False):
                 return self._send(503, b"visualizadores demais\n")
             sub = None

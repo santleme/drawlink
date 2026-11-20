@@ -111,7 +111,8 @@ def serve(
 
     hold: depois que uma gravacao termina, continua servindo o resultado final
     ate should_stop (senao a URL impressa morreria antes de ser aberta). Padrao:
-    verdadeiro quando ha --http-port e a fonte e um arquivo.
+    verdadeiro quando ha --http-port e a fonte e um arquivo, e falso com
+    --max-records (quem limita o numero de registros pediu uma execucao curta).
     """
     from .server import LiveServer
     from .sink import SvgLiveSink
@@ -126,7 +127,7 @@ def serve(
             f"--svg-out ({svg_out}) e a propria gravacao: escrever o SVG destruiria o replay"
         )
     if hold is None:
-        hold = endpoint is None and http_port is not None
+        hold = endpoint is None and http_port is not None and max_records is None
     log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
     live = LiveVectorizer()
     sink = SvgLiveSink(

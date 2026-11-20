@@ -94,6 +94,15 @@ class SvgLiveSink:
         self._scale_key = None
         if removed and self._view is not None:
             self.hub.apply(self._view, removed, [])
+        # Viewer, drawing.svg e arquivo contam a mesma historia: o desenho antigo
+        # sai de todos, mesmo que o primeiro registro novo ainda nao tenha chegado
+        # (ou nunca chegue). Fica um SVG vazio, com o tamanho da pagina.
+        with self._cond:
+            if self._snapshot is not None:
+                _lines, grid, paper, scale = self._snapshot
+                self._snapshot = ([], grid, paper, scale)
+                self._dirty = True
+                self._cond.notify()
 
     def render_svg(self):
         """O SVG atual como texto (o mesmo `write_svg` do export final)."""

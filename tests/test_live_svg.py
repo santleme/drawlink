@@ -564,6 +564,12 @@ def test_head_on_events_does_not_subscribe(srv):
     resp = conn.getresponse()
     assert resp.status == 200 and resp.read() == b""
     assert srv.hub.subscriber_count() == 0
+    # o GET faz stream sem tamanho declarado: o HEAD nao pode anunciar 0
+    assert resp.getheader("Content-Length") is None
+    conn.close()
+    conn, resp = _get(srv, f"/{srv.token}/events")
+    assert resp.getheader("Content-Length") is None
+    resp.close()
     conn.close()
 
 
@@ -635,3 +641,37 @@ def _status(server):
         return status
     except OSError:
         return None
+
+
+def test_max_records_does_not_hold_even_with_http(tmp_path):
+    rec = _recording(tmp_path)
+    done = threading.Event()
+    box = {}
+
+    def run():
+        box["n"] = cli.serve(str(rec), http_port=0, max_records=1, log=lambda *_: None)
+        done.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    assert done.wait(10), "serve ficou preso no hold com --max-records"
+    assert box["n"] == 1
+
+
+def test_reset_clears_the_drawing_svg_and_the_file_not_only_the_viewer(tmp_path):
+    out = tmp_path / "live.svg"
+    live, sink = LiveVectorizer(), SvgLiveSink(svg_out=out, min_interval_s=0)
+    try:
+        _feed(
+            live,
+            sink,
+            stream.pack_full(1, 1, 0, _page(((100, 100), (300, 160))), (210.0, 297.0)),
+        )
+        assert _wait(lambda: out.exists() and "<path" in out.read_text())
+        assert "<path" in sink.render_svg()
+        sink.reset()  # reconectou; o primeiro registro novo ainda nao chegou
+        assert "<path" not in sink.render_svg()
+        assert sink.render_svg().lstrip().startswith("<?xml")
+        assert _wait(lambda: "<path" not in out.read_text())
+        assert 'width="210.0mm"' in out.read_text()  # SVG vazio, mas com a pagina
+    finally:
+        sink.close()

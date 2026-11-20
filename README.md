@@ -44,6 +44,7 @@ drawlink serve tcp://127.0.0.1:8766 --token-file token.txt \
 - Com uma **gravação** como fonte e `--http-port`, o `serve` continua servindo o
   resultado final depois do replay (senão a URL impressa morreria antes de ser
   aberta); Ctrl-C ou SIGTERM encerra, e `--no-hold` encerra ao fim da gravação.
+  Com `--max-records` o `serve` não segura (a execução curta foi pedida).
   `--svg-out` igual à própria gravação (mesmo caminho, link ou `./`) é recusado.
 - Se a última escrita do `--svg-out` falhar, o `serve` termina com erro (código
   2) em vez de sair com sucesso sem SVG. Falhas no meio do caminho só são
@@ -61,7 +62,9 @@ drawlink serve tcp://127.0.0.1:8766 --token-file token.txt \
   (cliente que não manda o pedido ou não drena o fluxo perde a vaga) e há teto
   de 32 conexões simultâneas. Isso **limita** o que um processo local sem token
   consegue ocupar, mas não impede negação de serviço de quem controla a máquina.
-- Reconectar ao Draw (restart) limpa o desenho antigo nos visualizadores. Use a
+- Reconectar ao Draw (restart) limpa o desenho antigo nos visualizadores, em
+  `drawing.svg` e no arquivo (fica um SVG vazio com o tamanho da página até
+  chegar a página nova). Use a
   URL com a barra final: `/TOKEN` redireciona para `/TOKEN/`.
 - **Limites:** o JavaScript do visualizador foi checado em sintaxe e a sua lógica
   foi exercitada num DOM simulado em Node, mas **não** foi aberto em navegador

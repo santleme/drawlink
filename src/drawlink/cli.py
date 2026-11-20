@@ -7,7 +7,7 @@ import sys
 from draw.protocol import AuthenticationError, ProtocolError, resolve_token
 
 from . import source
-from .session import Session
+from .live import LiveVectorizer
 
 
 class OutputClosed(Exception):
@@ -15,13 +15,20 @@ class OutputClosed(Exception):
     trata OSError como queda do Draw e reconectaria para sempre."""
 
 
-def _describe(update, session):
+def _describe(update, live, delta=None):
     x, y, w, h = update.box
-    return (
+    text = (
         f"gen={update.generation} v={update.ink_version} "
         f"{'RESET ' if update.reset else ''}box=({x},{y},{w},{h}) "
-        f"tinta={int((session.mask > 0).sum())}px"
+        f"tinta={int((live.session.mask > 0).sum())}px"
     )
+    if delta is not None:
+        text += (
+            f" ilhas={len(live.vectors.islands)}"
+            f" +{len(delta.added)}/-{len(delta.removed)}"
+            f" vetorizadas={live.vectors.vectorized_last}"
+        )
+    return text
 
 
 def watch(
@@ -31,21 +38,25 @@ def watch(
     out=sys.stdout,
     log=None,
     should_stop=lambda: False,
+    vectors=False,
 ):
     """Aplica registros de FONTE e imprime uma linha por atualizacao."""
     if max_records is not None and max_records <= 0:
         return 0
     log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
-    session = Session()
+    live = LiveVectorizer()
     count = 0
 
     def on_record(record, new_connection):
         nonlocal count
         if new_connection:
-            session.clear()
-        update = session.feed(record)
+            live.clear()
+        if vectors:
+            update, delta = live.feed(record)
+        else:
+            update, delta = live.session.feed(record), None
         try:
-            print(_describe(update, session), file=out, flush=True)
+            print(_describe(update, live, delta), file=out, flush=True)
         except (BrokenPipeError, ValueError) as error:
             raise OutputClosed(str(error)) from error
         count += 1
@@ -93,9 +104,14 @@ def main(argv=None):
     w.add_argument("source", help="arquivo .drawink ou tcp://host[:porta]")
     w.add_argument("--token-file", default=None, help="token do stream (tcp://)")
     w.add_argument("--max-records", type=int, default=None)
+    w.add_argument(
+        "--vectors",
+        action="store_true",
+        help="vetoriza incrementalmente e mostra ilhas/delta por atualizacao",
+    )
     args = parser.parse_args(argv)
     try:
-        watch(args.source, args.token_file, args.max_records)
+        watch(args.source, args.token_file, args.max_records, vectors=args.vectors)
     except KeyboardInterrupt:
         return 130
     except OutputClosed:

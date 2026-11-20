@@ -41,21 +41,24 @@ delta quanto limpar a tela no reset e desenhar `added` estão corretos. Mudar o
 tamanho da página invalida o cache, mas o delta ainda remove as ilhas antigas.
 
 Medido (página 850x1200, esta máquina, contra o draw-core `91916f4`, com o
-vetorizador do #65):
+vetorizador do #65). O batch de 300 traços era 8,9 s antes do #65:
 
-| traços | batch | update com 1 traço novo |
-|-------:|------:|------------------------:|
-| 30     | 74 ms | 4,7 ms |
-| 120    | 108 ms | 4,3 ms |
-| 300    | 248 ms | 5,3 ms |
+| traços | batch | update (1 traço entra ou sai) |
+|-------:|------:|-----------------------------:|
+| 30     | 39-67 ms | 3,6-4,4 ms |
+| 120    | 116-132 ms | 4,0-4,9 ms |
+| 300    | 296-324 ms | 5,5-6,3 ms |
 
-Cerca de 7 ms de cada update é o preenchimento de buracos da página inteira
-(ver abaixo); o resto é vetorizar só o que mudou.
+Faixas de 4 repetições (mediana de 30 updates cada). O preenchimento de buracos
+da página inteira custa 2,2-3,2 ms, cerca de metade de cada update; o resto é
+rotular, hashear e vetorizar só o que mudou. A máquina tem carga variável: uma
+execução com ela ocupada mediu 7-9 ms por update, então trate os números como
+ordem de grandeza.
 
 Os números mudaram muito com o #65: o batch de 300 traços era 8,9 s com o
 vetorizador anterior, e o ganho do incremental caiu de milhares de vezes para
-10 a 50. Ele ainda ajuda (um update fica abaixo de um quadro a 12 FPS, o batch
-não garante isso numa página cheia), mas a pergunta "vale manter o incremental
+uns 10 a 50. Ele ainda ajuda (um update fica bem abaixo de um quadro a 12 FPS,
+~83 ms; o batch de uma página cheia passa disso), mas a pergunta "vale manter o incremental
 frente a um batch de ~250 ms?" é legítima e fica em aberto para o M3.
 
 **Limite conhecido:** o custo de um update é proporcional ao componente conexo

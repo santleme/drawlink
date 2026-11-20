@@ -389,3 +389,22 @@ def test_speck_inside_a_hole_fills_it_like_the_batch():
             bool(x["closed"]) for x in batch
         ], speck
         assert _deviation(batch, vec.polylines) <= 1.5, speck
+
+
+def test_speck_arriving_in_a_hole_replaces_the_cached_loop_in_the_delta():
+    # Com cache aquecido: a pinta chega e o laco em cache (buraco de 10 px) vira
+    # um traco preenchido. O delta tem de remover o laco e entregar o novo.
+    without, with_speck = _hole_with_speck(False), _hole_with_speck(True)
+    vec = IncrementalVectorizer()
+    vec.update(without)
+    (loop,) = vec.islands
+    assert any(line["closed"] for line in loop.polylines)
+    delta = vec.update(with_speck)
+    assert delta.removed == (loop.key,)
+    assert len(delta.added) == 1 and delta.added[0].key != loop.key
+    assert not any(line["closed"] for line in delta.added[0].polylines)
+    assert vec.vectorized_last == 1
+    # e a pinta saindo devolve o laco (o delta volta a trocar)
+    back = vec.update(without)
+    assert len(back.added) == 1 and back.removed == (delta.added[0].key,)
+    assert any(line["closed"] for line in back.added[0].polylines)

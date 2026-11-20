@@ -363,3 +363,48 @@ def test_same_generation_resize_replaces_border_strokes_geometry():
     )
     assert mine == truth
     assert set(consumer) == {i.key for i in live.vectors.islands}
+
+
+def _hole_with_speck(speck):
+    mask = np.zeros((60, 60), np.uint8)
+    mask[20:33, 20:33] = 255
+    mask[24:27, 24:27] = 0  # buraco 3x3 (9 px)
+    mask[25, 27] = 0  # reentrancia: o buraco passa a 10 px (acima do limite de 9)
+    if speck:
+        mask[25, 25] = 255  # pinta isolada no centro: o buraco cai para 9
+    return mask
+
+
+def test_speck_inside_a_hole_fills_it_like_the_batch():
+    # O batch preenche buracos antes de remover poeira: a pinta leva o buraco ao
+    # limite e ele vira tinta (1 polilinha aberta); sem a pinta o buraco fica
+    # (1 laco fechado). Recortar so o componente perdia a pinta.
+    for speck in (False, True):
+        mask = _hole_with_speck(speck)
+        batch = vectorize_clean(mask > 0)
+        vec = IncrementalVectorizer()
+        vec.update(mask)
+        assert len(vec.polylines) == len(batch), speck
+        assert [bool(x["closed"]) for x in vec.polylines] == [
+            bool(x["closed"]) for x in batch
+        ], speck
+        assert _deviation(batch, vec.polylines) <= 1.5, speck
+
+
+def test_speck_arriving_in_a_hole_replaces_the_cached_loop_in_the_delta():
+    # Com cache aquecido: a pinta chega e o laco em cache (buraco de 10 px) vira
+    # um traco preenchido. O delta tem de remover o laco e entregar o novo.
+    without, with_speck = _hole_with_speck(False), _hole_with_speck(True)
+    vec = IncrementalVectorizer()
+    vec.update(without)
+    (loop,) = vec.islands
+    assert any(line["closed"] for line in loop.polylines)
+    delta = vec.update(with_speck)
+    assert delta.removed == (loop.key,)
+    assert len(delta.added) == 1 and delta.added[0].key != loop.key
+    assert not any(line["closed"] for line in delta.added[0].polylines)
+    assert vec.vectorized_last == 1
+    # e a pinta saindo devolve o laco (o delta volta a trocar)
+    back = vec.update(without)
+    assert len(back.added) == 1 and back.removed == (delta.added[0].key,)
+    assert any(line["closed"] for line in back.added[0].polylines)

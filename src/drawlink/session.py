@@ -14,6 +14,13 @@ class Update:
     box: retangulo (x, y, w, h) alterado na grade da pagina. reset: True
     quando a geracao mudou (pagina nova) — quem vetoriza descarta o que
     tinha. generation e ink_version identificam a publicacao.
+
+    DRAL v2: captured_at_us e o carimbo de captura do quadro da ultima
+    passada (None sem dado, e sempre None em gravacao v1), no mesmo relogio de
+    ts_us; latency_us = ts_us - captured_at_us e a latencia captura->publicacao
+    (so o trecho dentro do Draw: nao inclui camera nem este lado). anchor_corners
+    e o quad da ancora em px da camera, tupla de 4 pares (x, y) de float, ou None
+    (imutavel e com igualdade/hash por valor, como o resto do Update).
     """
 
     box: tuple[int, int, int, int]
@@ -21,6 +28,21 @@ class Update:
     generation: int
     ink_version: int
     ts_us: int
+    captured_at_us: int | None = None
+    anchor_corners: tuple | None = None
+
+    @property
+    def latency_us(self):
+        if self.captured_at_us is None:
+            return None
+        return self.ts_us - self.captured_at_us
+
+
+def _as_tuple(corners):
+    """Cantos como tupla de tuplas: sem compartilhar o array do canvas."""
+    if corners is None:
+        return None
+    return tuple((float(x), float(y)) for x, y in corners)
 
 
 class Session:
@@ -36,6 +58,10 @@ class Session:
     @property
     def paper_mm(self):
         return self._canvas.paper_mm
+
+    @property
+    def anchor_corners(self):
+        return _as_tuple(self._canvas.anchor_corners)
 
     @property
     def generation(self):
@@ -55,6 +81,8 @@ class Session:
             generation=record.generation,
             ink_version=record.ink_version,
             ts_us=record.ts_us,
+            captured_at_us=self._canvas.captured_at_us,
+            anchor_corners=_as_tuple(self._canvas.anchor_corners),
         )
 
     def clear(self):

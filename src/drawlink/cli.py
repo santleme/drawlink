@@ -22,6 +22,8 @@ def _describe(update, live, delta=None):
         f"{'RESET ' if update.reset else ''}box=({x},{y},{w},{h}) "
         f"tinta={int((live.session.mask > 0).sum())}px"
     )
+    if update.latency_us is not None:
+        text += f" lat={update.latency_us / 1000:.1f}ms"
     if delta is not None:
         text += (
             f" ilhas={len(live.vectors.islands)}"

@@ -62,9 +62,11 @@ drawlink serve tcp://127.0.0.1:8766 --token-file token.txt \
   (cliente que não manda o pedido ou não drena o fluxo perde a vaga) e há teto
   de 32 conexões simultâneas. Isso **limita** o que um processo local sem token
   consegue ocupar, mas não impede negação de serviço de quem controla a máquina.
-- Reconectar ao Draw (restart) limpa o desenho antigo nos visualizadores, em
-  `drawing.svg` e no arquivo (fica um SVG vazio com o tamanho da página até
-  chegar a página nova). Use a
+- Quando o Draw reinicia e reconecta, o desenho antigo só é limpo quando chega o
+  **primeiro registro da nova conexão** (visualizadores, `drawing.svg` e o
+  arquivo juntos; fica um SVG vazio com o tamanho da página até a página nova
+  ser vetorizada). Se o Draw reconecta e não publica nada, o último desenho
+  continua em todos os três, de propósito: é o último estado conhecido. Use a
   URL com a barra final: `/TOKEN` redireciona para `/TOKEN/`.
 - **Limites:** o JavaScript do visualizador foi checado em sintaxe e a sua lógica
   foi exercitada num DOM simulado em Node, mas **não** foi aberto em navegador

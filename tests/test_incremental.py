@@ -2,8 +2,8 @@
 
 import cv2
 import numpy as np
-from draw import stream
 from draw.exporters.vectorize import vectorize_clean
+from draw_dral import stream
 
 from drawlink import cli
 from drawlink.incremental import IncrementalVectorizer, window

@@ -5,7 +5,8 @@ e vetor/CAD/cursor. Processo separado: se o drawlink cair, o Draw segue
 digitalizando (o publicador do Draw nunca bloqueia o laço).
 
 Contrato do stream: `bridge/STREAM.md` no draw-core (protocolo `DRAL`; o
-publicador escreve v2 e o leitor ainda aceita gravações v1).
+publicador escreve v2 e o leitor ainda aceita gravações v1). O drawlink usa
+`draw-dral` diretamente para o codec e o handshake.
 
 ## Estado
 
@@ -157,5 +158,8 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check . && pytest -q
 ```
 
-A dependência do `draw-core` está fixada no commit `91916f4` (draw-core
-#64 DRAL v2 e #65 vetorizador); passa para uma tag quando o draw-core publicar uma.
+O `draw-core` continua necessário para `draw.config`, `draw.exporters` e o
+vetorizador. `draw-dral` fornece o stream e o handshake sem importar essas
+partes. Enquanto os pacotes não tiverem versões publicadas, `pyproject.toml`
+fixa os dois no mesmo SHA do draw-core; o pin de `draw-dral` usa
+`#subdirectory=packages/draw-dral`. Esta mudança depende do draw-core #190.

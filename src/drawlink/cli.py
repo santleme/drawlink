@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from draw.protocol import AuthenticationError, ProtocolError, resolve_token
+from draw_dral.wire import AuthenticationError, ProtocolError, resolve_token
 
 from . import source
 from .live import LiveVectorizer

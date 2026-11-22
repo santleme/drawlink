@@ -5,8 +5,9 @@ import time
 
 import numpy as np
 import pytest
-from draw import contracts, stream
-from draw.protocol import AuthenticationError, ProtocolError
+from draw import contracts
+from draw_dral import stream
+from draw_dral.wire import AuthenticationError, ProtocolError
 
 from drawlink import cli, source
 from drawlink.session import Session
@@ -254,7 +255,7 @@ def test_backoff_not_reset_by_handshake_alone(monkeypatch):
     """Draw que autentica e cai antes de qualquer registro nao zera o backoff."""
     import socket as socket_module
 
-    from draw.protocol import server_handshake
+    from draw_dral.wire import server_handshake
 
     srv = socket_module.create_server(("127.0.0.1", 0))
     port = srv.getsockname()[1]

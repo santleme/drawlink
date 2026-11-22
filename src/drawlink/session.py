@@ -3,8 +3,8 @@
 import zlib
 from dataclasses import dataclass
 
-from draw.protocol import ProtocolError
-from draw.stream import InkCanvas, InkRecord
+from draw_dral.stream import InkCanvas, InkRecord
+from draw_dral.wire import ProtocolError
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,6 +1,6 @@
 """Sessao + vetorizacao incremental: do registro DRAL ao delta de vetores."""
 
-from draw.stream import InkRecord
+from draw_dral.stream import InkRecord
 
 from .incremental import IncrementalVectorizer, VectorDelta
 from .session import Session, Update

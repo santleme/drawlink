@@ -9,8 +9,8 @@ import socket
 import time
 from urllib.parse import urlparse
 
-from draw.protocol import AuthenticationError, ProtocolError, client_handshake
-from draw.stream import DEFAULT_PORT, iter_records, records_from_file
+from draw_dral.stream import DEFAULT_PORT, iter_records, records_from_file
+from draw_dral.wire import AuthenticationError, ProtocolError, client_handshake
 
 BACKOFF_START_S = 0.25
 BACKOFF_MAX_S = 5.0

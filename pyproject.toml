@@ -9,9 +9,10 @@ description = "Live bridge: Draw ink stream -> vector/CAD/cursor. Separate proce
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
-    # Codec do stream (draw.stream) e vetorizador (draw.exporters). Fixado no
-    # commit do draw-core com o stream DRAL v2 (PR #64) e o vetorizador do #65; vira tag quando houver.
-    "draw-core @ git+https://github.com/santleme/draw-core@91916f4515e23a79cabe75c8dfc10e485ab5088d",
+    # DRAL (fio + handshake) e um pacote separado; manter ambos no mesmo SHA.
+    "draw-dral @ git+https://github.com/santleme/draw-core@1579f1cc61bf263dd8cc72865eebe1dac0408a1d#subdirectory=packages/draw-dral",
+    # draw-core ainda fornece config e vetorizador/exportador para este consumidor.
+    "draw-core @ git+https://github.com/santleme/draw-core@1579f1cc61bf263dd8cc72865eebe1dac0408a1d",
 ]
 
 [project.optional-dependencies]
